@@ -235,7 +235,7 @@ class AdSystem {
       // Set up click tracking
       anchor.addEventListener("click", (e) => {
         e.preventDefault();
-        
+        console.log(ad.tracking.destination_url);
         // Track click event
         if (ad.tracking?.click_url) {
           this.sendImpression(ad.tracking.click_url).then(() => {
