@@ -116,6 +116,7 @@ class AdSystem {
     const isPIDValid = await PIDValidator.validatePID();
     
     if (!isPIDValid) {
+      alert("PID validation failed. Ad system will not initialize");
       console.error("PID validation failed. Ad system will not initialize.");
       return;
     }
