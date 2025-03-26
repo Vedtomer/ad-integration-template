@@ -289,6 +289,7 @@ class AdSystem {
     }
   }
 
+  
   // Helper method to completely hide ad slots that encounter errors
   hideAdSlot(slotElement, message) {
     try {
