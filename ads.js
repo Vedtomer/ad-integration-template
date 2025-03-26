@@ -36,11 +36,9 @@ function initializeAdSystemConfig() {
     deviceMake: navigator.vendor || "Unknown",
     deviceModel: navigator.platform || "Unknown",
     deviceOs: navigator.userAgentData?.platform || navigator.platform || "Unknown",
-    deviceOsVersion: navigator.userAgent.match(/OS ([\\d_]+)/)?.[1] || "Unknown",
+    deviceOsVersion: navigator.userAgent.match(/OS ([\d_]+)/)?.[1] || "Unknown",
     deviceCarrier: "unknown",
   };
-
- // console.log("Ad System Config:", window.adSystemConfig);
 }
 
 window.addEventListener("DOMContentLoaded", initializeAdSystemConfig);
@@ -111,7 +109,11 @@ class AdSystem {
 
   async loadAdForSlot(slotElement, slot) {
     try {
-      const bidResponse = await this.makeBidRequest(slot);
+      // Get PID from URL query parameters if available
+      const urlParams = new URLSearchParams(window.location.search);
+      const pid = urlParams.get('pid');
+
+      const bidResponse = await this.makeBidRequest(slot, pid);
       this.renderAd(slotElement, bidResponse, slot);
     } catch (error) {
       this.showError(slotElement, "Failed to load advertisement.");
@@ -119,7 +121,7 @@ class AdSystem {
     }
   }
 
-  async makeBidRequest(slot) {
+  async makeBidRequest(slot, pid = null) {
     const bidRequest = {
       slot_id: slot.slot_id,
       device: {
@@ -135,6 +137,11 @@ class AdSystem {
         carrier: this.config.deviceCarrier,
       },
     };
+
+    // Add pid to the request if available
+    if (pid) {
+      bidRequest.pid = pid;
+    }
 
     try {
       const response = await fetch(this.bidderUrl, {
@@ -163,11 +170,109 @@ class AdSystem {
       this.renderBrandAd(slotElement, bidResponse, slot);
     } else if (adType === "ortb") {
       this.renderOrtbAd(slotElement, bidResponse, slot);
+    } else if (adType === "testing_pid") {
+      this.renderTestingPidAd(slotElement, bidResponse, slot);
     } else {
       this.showError(slotElement, "Unknown ad type received.");
     }
   }
 
+  renderTestingPidAd(slotElement, ad, slot) {
+    if (!ad || !ad.full_file_path) {
+      this.showError(slotElement, "Invalid testing_pid ad creative.");
+      return;
+    }
+  
+    try {
+      // Create container elements
+      const container = document.createElement("div");
+      container.style.width = "100%";
+      container.style.height = "100%";
+      container.style.overflow = "hidden";
+      container.style.position = "relative";
+      
+      const anchor = document.createElement("a");
+      anchor.href = ad.tracking?.destination_url || "#";
+      anchor.style.display = "block";
+      anchor.style.width = "100%";
+      anchor.style.height = "100%";
+      
+      const img = document.createElement("img");
+      img.src = ad.full_file_path;
+      img.alt = "Advertisement";
+      img.style.width = "100%";
+      img.style.height = "100%";
+      img.style.objectFit = "contain";
+      
+      // Generate unique ID for this ad
+      const adId = "ad-" + Math.random().toString(36).substring(2, 10);
+      img.id = adId;
+      
+      // Set up regular impression tracking (fires on load)
+      const trackImpression = () => {
+        if (ad.tracking?.impression_url) {
+          this.sendImpression(ad.tracking.impression_url);
+        }
+      };
+      
+      // Impression tracking
+      img.addEventListener("load", trackImpression);
+      
+      // Error handling
+      img.addEventListener("error", () => {
+        this.showError(slotElement, "Ad image failed to load.");
+      });
+      
+      // Set up click tracking
+      anchor.addEventListener("click", (e) => {
+        e.preventDefault();
+        
+        // Track click event
+        if (ad.tracking?.click_url) {
+          this.sendImpression(ad.tracking.click_url).then(() => {
+            // After click tracking, redirect to destination URL
+            const destinationUrl = ad.tracking.destination_url || "#";
+            
+            // Small delay to ensure tracking completes
+            setTimeout(() => {
+              window.location.href = destinationUrl;
+            }, 100);
+          }).catch(error => {
+            console.error("Click tracking failed, but still redirecting:", error);
+            
+            // Fallback redirect in case tracking fails
+            const destinationUrl = ad.tracking.destination_url || "#";
+            window.location.href = destinationUrl;
+          });
+        } else {
+          // If no click tracking URL, redirect directly
+          const destinationUrl = ad.tracking.destination_url || "#";
+          window.location.href = destinationUrl;
+        }
+      });
+      
+      // Assemble the ad
+      anchor.appendChild(img);
+      container.appendChild(anchor);
+      slotElement.appendChild(container);
+      
+      // Set up viewability tracking for billable impressions
+      this.setupViewabilityTracking(img, () => {
+        // Send billable impression when viewability criteria are met
+        if (ad.tracking?.billable_impression_url) {
+          this.sendImpression(ad.tracking.billable_impression_url);
+        }
+      });
+      
+    } catch (error) {
+      console.error("Error rendering testing_pid ad:", error);
+      this.showError(slotElement, "Failed to render advertisement.");
+    }
+  }
+
+  // Existing methods: renderBrandAd, renderOrtbAd, extractUrls, 
+  // setupViewabilityTracking, sendImpression, replaceAuctionMacros, showError 
+  // remain the same as in the previous implementation
   renderBrandAd(slotElement, ad, slot) {
     if (!ad || !ad.full_file_path) {
       this.showError(slotElement, "Invalid brand ad creative.");
@@ -539,4 +644,3 @@ document.addEventListener("DOMContentLoaded", () => {
     console.error("Failed to initialize ad system:", err);
   });
 });
-
