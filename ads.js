@@ -73,17 +73,21 @@ class AdSystem {
       await new Promise(resolve => setTimeout(resolve, delay));
       attempt++;
     }
+
     if (typeof window.adSystemConfig === "undefined") {
       console.error("Ad System Configuration not found after retries.");
       return;
     }
+
     this.config = window.adSystemConfig;
     this.adSlots = document.querySelectorAll(".ad-placeholder");
+
     // Process all slots in parallel
     const slotPromises = Array.from(this.adSlots).map(slotElement => {
       const width = parseInt(slotElement.dataset.width, 10) || 0;
       const height = parseInt(slotElement.dataset.height, 10) || 0;
       const slot_id = parseInt(slotElement.dataset.slot_id, 10) || 0;
+
       if (width && height && slot_id) {
         slotElement.style.width = `${width}px`;
         slotElement.style.height = `${height}px`;
@@ -91,10 +95,11 @@ class AdSystem {
         
         return this.loadAdForSlot(slotElement, { slot_id, width, height });
       } else {
-        this.hideAdSlot(slotElement, "Ad size & slot not defined.");
+        this.showError(slotElement, "Ad size & slot not defined.");
         return Promise.resolve();
       }
     });
+
     try {
       await Promise.allSettled(slotPromises);
     } catch (error) {
@@ -107,10 +112,11 @@ class AdSystem {
       // Get PID from URL query parameters if available
       const urlParams = new URLSearchParams(window.location.search);
       const pid = urlParams.get('pid');
+
       const bidResponse = await this.makeBidRequest(slot, pid);
       this.renderAd(slotElement, bidResponse, slot);
     } catch (error) {
-      this.hideAdSlot(slotElement, "Failed to load advertisement.");
+      this.showError(slotElement, "Failed to load advertisement.");
       console.error(`Ad Error [${slot.width}x${slot.height}]:`, error);
     }
   }
@@ -160,26 +166,20 @@ class AdSystem {
     // Determine ad type and render accordingly
     const adType = bidResponse?.ad_type;
     
-    try {
-      if (adType === "brand") {
-        this.renderBrandAd(slotElement, bidResponse, slot);
-      } else if (adType === "ortb") {
-        this.renderOrtbAd(slotElement, bidResponse, slot);
-      } else if (adType === "testing_pid") {
-        this.renderTestingPidAd(slotElement, bidResponse, slot);
-      } else {
-        this.hideAdSlot(slotElement, "Unknown ad type received.");
-      }
-    } catch (error) {
-      console.error("Error rendering ad:", error);
-      this.hideAdSlot(slotElement, "Unexpected error rendering advertisement.");
+    if (adType === "brand") {
+      this.renderBrandAd(slotElement, bidResponse, slot);
+    } else if (adType === "ortb") {
+      this.renderOrtbAd(slotElement, bidResponse, slot);
+    } else if (adType === "testing_pid") {
+      this.renderTestingPidAd(slotElement, bidResponse, slot);
+    } else {
+      this.showError(slotElement, "Unknown ad type received.");
     }
   }
 
-  
   renderTestingPidAd(slotElement, ad, slot) {
     if (!ad || !ad.full_file_path) {
-      this.hideAdSlot(slotElement, "Invalid testing_pid ad creative.");
+      this.showError(slotElement, "Invalid testing_pid ad creative.");
       return;
     }
   
@@ -192,35 +192,21 @@ class AdSystem {
       container.style.position = "relative";
       
       const anchor = document.createElement("a");
-      anchor.href = "#"; // Temporary href
+      anchor.href = ad.tracking?.destination_url || "#";
       anchor.style.display = "block";
       anchor.style.width = "100%";
       anchor.style.height = "100%";
       
-      // Determine if we should use video or image based on creative_type
-      const isVideo = ad.creative_type === "video";
-      const mediaElement = isVideo ? document.createElement("video") : document.createElement("img");
-      
-      // Common properties
-      mediaElement.src = ad.full_file_path;
-      mediaElement.style.width = "100%";
-      mediaElement.style.height = "100%";
-      mediaElement.style.objectFit = "contain";
+      const img = document.createElement("img");
+      img.src = ad.full_file_path;
+      img.alt = "Advertisement";
+      img.style.width = "100%";
+      img.style.height = "100%";
+      img.style.objectFit = "contain";
       
       // Generate unique ID for this ad
       const adId = "ad-" + Math.random().toString(36).substring(2, 10);
-      mediaElement.id = adId;
-      
-      // Video-specific properties
-      if (isVideo) {
-        mediaElement.controls = false;
-        mediaElement.autoplay = true;
-        mediaElement.muted = true;
-        mediaElement.playsInline = true;
-        mediaElement.loop = true;
-      } else {
-        mediaElement.alt = "Advertisement";
-      }
+      img.id = adId;
       
       // Set up regular impression tracking (fires on load)
       const trackImpression = () => {
@@ -229,16 +215,12 @@ class AdSystem {
         }
       };
       
-      // Set up event listeners based on media type
-      if (isVideo) {
-        mediaElement.addEventListener("loadeddata", trackImpression);
-      } else {
-        mediaElement.addEventListener("load", trackImpression);
-      }
+      // Impression tracking
+      img.addEventListener("load", trackImpression);
       
       // Error handling
-      mediaElement.addEventListener("error", () => {
-        this.hideAdSlot(slotElement, `${isVideo ? "Video" : "Image"} failed to load.`);
+      img.addEventListener("error", () => {
+        this.showError(slotElement, "Ad image failed to load.");
       });
       
       // Set up click tracking
@@ -270,12 +252,12 @@ class AdSystem {
       });
       
       // Assemble the ad
-      anchor.appendChild(mediaElement);
+      anchor.appendChild(img);
       container.appendChild(anchor);
       slotElement.appendChild(container);
       
       // Set up viewability tracking for billable impressions
-      this.setupViewabilityTracking(mediaElement, () => {
+      this.setupViewabilityTracking(img, () => {
         // Send billable impression when viewability criteria are met
         if (ad.tracking?.billable_impression_url) {
           this.sendImpression(ad.tracking.billable_impression_url);
@@ -284,20 +266,7 @@ class AdSystem {
       
     } catch (error) {
       console.error("Error rendering testing_pid ad:", error);
-      this.hideAdSlot(slotElement, "Failed to render advertisement.");
-    }
-  }
-
-
-  hideAdSlot(slotElement, message) {
-    try {
-      // Remove the ad slot from the DOM entirely
-      slotElement.style.display = 'none';
-      
-      // Optional: Log the error for debugging
-      console.warn(`Ad Slot Hidden: ${message}`);
-    } catch (error) {
-      console.error("Error hiding ad slot:", error);
+      this.showError(slotElement, "Failed to render advertisement.");
     }
   }
 
